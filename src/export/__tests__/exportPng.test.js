@@ -1,6 +1,4 @@
-/**
- * @vitest-environment jsdom
- */
+// @vitest-environment node
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { exportPng, generateFilename } from '../exportPng.js'
 
@@ -42,7 +40,9 @@ describe('exportPng', () => {
       download: '',
       click: vi.fn(),
     }
-    vi.spyOn(document, 'createElement').mockReturnValue(mockAnchor)
+    vi.stubGlobal('document', {
+      createElement: vi.fn(() => mockAnchor),
+    })
   })
 
   it('calls canvas.toBlob with image/png MIME type', async () => {
