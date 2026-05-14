@@ -1,0 +1,74 @@
+/* Design tokens from DESIGN.md — Cover Generator */
+
+:root {
+  /* Colors */
+  --color-primary: #0F172A;
+  --color-secondary: #475569;
+  --color-tertiary: #94A3B8;
+  --color-accent: #4F46E5;
+  --color-accent-hover: #4338CA;
+  --color-neutral: #FAFAFA;
+  --color-surface-elevated: #FFFFFF;
+  --color-surface-subtle: #F4F4F5;
+  --color-border: rgba(0, 0, 0, 0.08);
+  --color-footer-bg: #0F172A;
+  --color-on-primary: #FFFFFF;
+  --color-on-accent: #FFFFFF;
+  --color-on-footer: #FFFFFF;
+
+  /* Typography — Font Families */
+  --font-display: 'Outfit', sans-serif;
+  --font-body: 'Inter', sans-serif;
+
+  /* Typography — Sizes */
+  --text-hero: clamp(28px, 7vw + 4px, 3rem);
+  --text-h1: 3.75rem;
+  --text-h2: clamp(22px, 3vw + 8px, 32px);
+  --text-h3: 1.5rem;
+  --text-body-lg: 1.125rem;
+  --text-body-md: 1rem;
+  --text-body-sm: 0.875rem;
+  --text-label-caps: 0.625rem;
+
+  /* Typography — Weights */
+  --font-weight-regular: 400;
+  --font-weight-bold: 700;
+
+  /* Typography — Line Heights */
+  --leading-tight: 1.1;
+  --leading-snug: 1.2;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.4;
+
+  /* Typography — Letter Spacing */
+  --tracking-caps: 0.2em;
+
+  /* Spacing (4px base unit, 8px grid) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-20: 80px;
+  --space-24: 96px;
+
+  /* Border Radius */
+  --rounded-sm: 4px;
+  --rounded-base: 6px;
+  --rounded-md: 8px;
+  --rounded-lg: 10px;
+  --rounded-xl: 12px;
+  --rounded-2xl: 16px;
+  --rounded-profile: 46px;
+  --rounded-full: 9999px;
+
+  /* Elevation */
+  --shadow-level-1: 0 1px 3px rgba(0, 0, 0, 0.05);
+  --shadow-level-1-hover: 0 12px 24px -8px rgba(0, 0, 0, 0.1);
+  --shadow-level-2: 0 12px 24px -8px rgba(0, 0, 0, 0.1);
+}
