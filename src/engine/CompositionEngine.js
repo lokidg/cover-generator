@@ -555,6 +555,428 @@ export function applyRotation(primitives, config) {
   return primitives
 }
 
+// ─── Scaling Post-Processing ─────────────────────────────────
+
+/**
+ * Applies scaling to primitives' size dimensions (step 11 in the pipeline).
+ * This is a pure post-processing step — it does NOT modify positions, only sizes.
+ * Does NOT consume PRNG values.
+ *
+ * When `config.scalingEnabled` is false (or not provided), returns primitives unchanged (no-op).
+ *
+ * Static mode (`config.scalingMode === 'static'`):
+ *   Multiplies each primitive's size[0] by scaleX, size[1] by scaleY, size[2] by scaleZ.
+ *
+ * Functional mode (`config.scalingMode === 'functional'`):
+ *   - Taper: linearly interpolates scale from 1.0 to taperEndScale along the chosen axis.
+ *   - Step: divides primitives into stepCount groups along the chosen axis, applies stepScale uniformly.
+ *   - Wave: applies sinusoidal scale `1 + waveAmplitude * sin(waveFrequency * t * 2π)` along the chosen axis.
+ *
+ * After scaling, any size dimension < 1 is clamped to 1 voxel unit.
+ *
+ * @param {Array<object>} primitives - Array of primitive objects with position and size arrays
+ * @param {object} config - Configuration object
+ * @param {boolean} [config.scalingEnabled=false] - Whether scaling is active
+ * @param {string} [config.scalingMode='static'] - 'static' or 'functional'
+ * @param {number} [config.scaleX=1.0] - Static X scale factor (0.1–3.0)
+ * @param {number} [config.scaleY=1.0] - Static Y scale factor (0.1–3.0)
+ * @param {number} [config.scaleZ=1.0] - Static Z scale factor (0.1–3.0)
+ * @param {string} [config.scalingFunction='taper'] - 'taper', 'step', or 'wave'
+ * @param {string} [config.scalingAxis='Y'] - 'X', 'Y', or 'Z'
+ * @param {number} [config.taperEndScale=0.5] - End scale for taper (0.1–1.0)
+ * @param {number} [config.stepCount=4] - Number of step groups (2–10)
+ * @param {number} [config.stepScale=0.8] - Scale factor per step group (0.1–2.0)
+ * @param {number} [config.waveFrequency=1.0] - Wave frequency (0.5–5.0)
+ * @param {number} [config.waveAmplitude=0.3] - Wave amplitude (0.1–1.0)
+ * @param {number} config.gridTileSize - Grid tile size for normalization
+ * @returns {Array<object>} The primitives array (mutated in place) with scaled sizes
+ */
+export function applyScaling(primitives, config) {
+  if (!config.scalingEnabled) {
+    return primitives
+  }
+
+  const mode = config.scalingMode || 'static'
+  const gridSize = config.gridTileSize
+
+  if (mode === 'static') {
+    const scaleX = config.scaleX != null ? config.scaleX : 1.0
+    const scaleY = config.scaleY != null ? config.scaleY : 1.0
+    const scaleZ = config.scaleZ != null ? config.scaleZ : 1.0
+
+    for (const prim of primitives) {
+      if (!prim.size) continue
+      prim.size = [
+        Math.max(1, Math.round(prim.size[0] * scaleX)),
+        Math.max(1, Math.round(prim.size[1] * scaleY)),
+        Math.max(1, Math.round(prim.size[2] * scaleZ)),
+      ]
+    }
+  } else if (mode === 'functional') {
+    const fn = config.scalingFunction || 'taper'
+    const axis = config.scalingAxis || 'Y'
+    const axisIndex = axis === 'X' ? 0 : axis === 'Y' ? 1 : 2
+
+    for (const prim of primitives) {
+      if (!prim.position || !prim.size) continue
+
+      // Normalize position along the chosen axis using gridTileSize
+      const t = gridSize > 0 ? prim.position[axisIndex] / gridSize : 0
+
+      let scaleFactor = 1.0
+
+      if (fn === 'taper') {
+        const endScale = config.taperEndScale != null ? config.taperEndScale : 0.5
+        // Linear interpolation from 1.0 to endScale
+        scaleFactor = 1.0 + (endScale - 1.0) * t
+      } else if (fn === 'step') {
+        const stepCount = config.stepCount != null ? config.stepCount : 4
+        const stepScale = config.stepScale != null ? config.stepScale : 0.8
+        // Divide into stepCount groups — all primitives in a group get the same scale
+        // The group index determines the scale: group 0 gets stepScale, group 1 gets stepScale, etc.
+        scaleFactor = stepScale
+      } else if (fn === 'wave') {
+        const freq = config.waveFrequency != null ? config.waveFrequency : 1.0
+        const amp = config.waveAmplitude != null ? config.waveAmplitude : 0.3
+        // Sinusoidal scale: 1 + amplitude * sin(frequency * t * 2π)
+        scaleFactor = 1 + amp * Math.sin(freq * t * 2 * Math.PI)
+      }
+
+      // Apply scale factor to all size dimensions
+      prim.size = [
+        Math.max(1, Math.round(prim.size[0] * scaleFactor)),
+        Math.max(1, Math.round(prim.size[1] * scaleFactor)),
+        Math.max(1, Math.round(prim.size[2] * scaleFactor)),
+      ]
+    }
+  }
+
+  return primitives
+}
+
+// ─── Functional Style Post-Processing ────────────────────────
+
+/**
+ * Parses a hex color string to an RGB array.
+ * @param {string} hex - Hex color like '#E0E0E3' or '#4F46E5'
+ * @returns {number[]} [r, g, b] each in 0–255
+ */
+function parseHex(hex) {
+  const h = hex.startsWith('#') ? hex.slice(1) : hex
+  return [
+    parseInt(h.slice(0, 2), 16),
+    parseInt(h.slice(2, 4), 16),
+    parseInt(h.slice(4, 6), 16),
+  ]
+}
+
+/**
+ * Linearly interpolates between two RGB colors.
+ * @param {number[]} startRGB - [r, g, b] start color
+ * @param {number[]} endRGB - [r, g, b] end color
+ * @param {number} t - Interpolation factor in [0, 1]
+ * @returns {string} Hex color string like '#AABBCC'
+ */
+function lerpColor(startRGB, endRGB, t) {
+  const clamped = Math.max(0, Math.min(1, t))
+  const r = Math.round(startRGB[0] + (endRGB[0] - startRGB[0]) * clamped)
+  const g = Math.round(startRGB[1] + (endRGB[1] - startRGB[1]) * clamped)
+  const b = Math.round(startRGB[2] + (endRGB[2] - startRGB[2]) * clamped)
+  return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`
+}
+
+/**
+ * Applies functional style (position-based gradients) to primitives' fill colors (step 12 in the pipeline).
+ * This is a pure post-processing step — it overrides `style.default.fill` with computed colors.
+ * Does NOT consume PRNG values.
+ *
+ * When `config.functionalStyleEnabled` is false (or not provided), returns primitives unchanged (no-op).
+ *
+ * Gradient modes (gradient-x, gradient-y, gradient-z):
+ *   Computes the composition bounding box (min/max on each axis from all primitives' positions),
+ *   normalizes each primitive's position along the selected axis to [0, 1],
+ *   then lerps RGB between startColor and endColor.
+ *
+ * Radial mode:
+ *   Computes the centroid of all primitives' positions,
+ *   normalizes each primitive's Euclidean distance from the centroid to [0, 1]
+ *   (dividing by the maximum distance from centroid to any primitive),
+ *   then lerps RGB between startColor and endColor.
+ *
+ * The computed color overrides `style.default.fill` while preserving stroke and other style properties.
+ *
+ * @param {Array<object>} primitives - Array of primitive objects with position and style
+ * @param {object} config - Configuration object
+ * @param {boolean} [config.functionalStyleEnabled=false] - Whether functional style is active
+ * @param {string} [config.styleFunction='gradient-x'] - 'gradient-x'|'gradient-y'|'gradient-z'|'radial'
+ * @param {string} [config.styleStartColor='#E0E0E3'] - Start color (hex)
+ * @param {string} [config.styleEndColor='#4F46E5'] - End color (hex)
+ * @param {number} [config.gridTileSize] - Grid tile size (fallback for normalization)
+ * @returns {Array<object>} The primitives array (mutated in place) with updated fill colors
+ */
+export function applyFunctionalStyle(primitives, config) {
+  if (!config.functionalStyleEnabled) {
+    return primitives
+  }
+
+  if (!primitives || primitives.length === 0) {
+    return primitives
+  }
+
+  const styleFunction = config.styleFunction || 'gradient-x'
+  const startColor = config.styleStartColor || '#E0E0E3'
+  const endColor = config.styleEndColor || '#4F46E5'
+  const startRGB = parseHex(startColor)
+  const endRGB = parseHex(endColor)
+
+  // Filter primitives that have valid positions
+  const validPrimitives = primitives.filter(p => p.position && p.position.length >= 3)
+  if (validPrimitives.length === 0) {
+    return primitives
+  }
+
+  if (styleFunction === 'radial') {
+    // Compute centroid
+    let cx = 0, cy = 0, cz = 0
+    for (const prim of validPrimitives) {
+      cx += prim.position[0]
+      cy += prim.position[1]
+      cz += prim.position[2]
+    }
+    cx /= validPrimitives.length
+    cy /= validPrimitives.length
+    cz /= validPrimitives.length
+
+    // Compute max distance from centroid
+    let maxDist = 0
+    for (const prim of validPrimitives) {
+      const dx = prim.position[0] - cx
+      const dy = prim.position[1] - cy
+      const dz = prim.position[2] - cz
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz)
+      if (dist > maxDist) maxDist = dist
+    }
+
+    // Apply radial gradient
+    for (const prim of validPrimitives) {
+      const dx = prim.position[0] - cx
+      const dy = prim.position[1] - cy
+      const dz = prim.position[2] - cz
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz)
+      const t = maxDist > 0 ? dist / maxDist : 0
+      const color = lerpColor(startRGB, endRGB, t)
+
+      // Ensure style.default exists and override fill
+      if (!prim.style) prim.style = { default: {} }
+      if (!prim.style.default) prim.style.default = {}
+      prim.style.default.fill = color
+    }
+  } else {
+    // Axis-based gradient: gradient-x, gradient-y, gradient-z
+    const axisIndex = styleFunction === 'gradient-x' ? 0
+      : styleFunction === 'gradient-y' ? 1
+      : 2 // gradient-z
+
+    // Compute bounding box along the selected axis
+    let axisMin = Infinity
+    let axisMax = -Infinity
+    for (const prim of validPrimitives) {
+      const val = prim.position[axisIndex]
+      if (val < axisMin) axisMin = val
+      if (val > axisMax) axisMax = val
+    }
+
+    const axisRange = axisMax - axisMin
+
+    // Apply axis gradient
+    for (const prim of validPrimitives) {
+      const t = axisRange > 0 ? (prim.position[axisIndex] - axisMin) / axisRange : 0
+      const color = lerpColor(startRGB, endRGB, t)
+
+      // Ensure style.default exists and override fill
+      if (!prim.style) prim.style = { default: {} }
+      if (!prim.style.default) prim.style.default = {}
+      prim.style.default.fill = color
+    }
+  }
+
+  return primitives
+}
+
+// ─── Per-Face Style Post-Processing ──────────────────────────
+
+/**
+ * Darkens a hex color by a given factor for use as stroke.
+ * @param {string} hex - Hex color like '#E0E0E3'
+ * @param {number} factor - Darkening factor (0–1), where 0.15 means 15% darker
+ * @returns {string} Darkened hex color
+ */
+function darkenColor(hex, factor = 0.15) {
+  const r = Math.max(0, Math.round(parseInt(hex.slice(1, 3), 16) * (1 - factor)))
+  const g = Math.max(0, Math.round(parseInt(hex.slice(3, 5), 16) * (1 - factor)))
+  const b = Math.max(0, Math.round(parseInt(hex.slice(5, 7), 16) * (1 - factor)))
+  return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`
+}
+
+/**
+ * Applies per-face styling to primitives (step 14 in the pipeline).
+ * This is a pure post-processing step that transforms primitive style objects.
+ *
+ * When `config.perFaceEnabled` is false (or not provided), returns primitives unchanged (no-op).
+ * When enabled, restructures each primitive's style to include `top`, `left`, `right` keys
+ * each with `{ fill, stroke }` properties using the configured face colors.
+ *
+ * The existing `default` style is preserved as a fallback for unspecified faces.
+ * Per-face styling takes precedence over functional style since it runs after it in the pipeline.
+ *
+ * @param {Array<object>} primitives - Array of primitive objects with style properties
+ * @param {object} config - Configuration object
+ * @param {boolean} [config.perFaceEnabled=false] - Whether per-face styling is active
+ * @param {string} [config.faceTopColor] - Hex color for the top face
+ * @param {string} [config.faceLeftColor] - Hex color for the left face
+ * @param {string} [config.faceRightColor] - Hex color for the right face
+ * @returns {Array<object>} The primitives array (mutated in place) with per-face styles applied
+ */
+export function applyPerFaceStyle(primitives, config) {
+  if (!config.perFaceEnabled) {
+    return primitives
+  }
+
+  const topColor = config.faceTopColor || '#E0E0E3'
+  const leftColor = config.faceLeftColor || '#E0E0E3'
+  const rightColor = config.faceRightColor || '#E0E0E3'
+
+  for (const prim of primitives) {
+    if (!prim.style) continue
+
+    // Preserve the existing default style as fallback
+    const existingDefault = prim.style.default || {}
+
+    prim.style = {
+      default: existingDefault,
+      top: { fill: topColor, stroke: darkenColor(topColor) },
+      left: { fill: leftColor, stroke: darkenColor(leftColor) },
+      right: { fill: rightColor, stroke: darkenColor(rightColor) },
+    }
+  }
+
+  return primitives
+}
+
+// ─── Hatching & Smooth Post-Processing ───────────────────────
+
+/**
+ * Applies hatching or smooth solid styling to primitives (step 13 in the pipeline).
+ * This is a pure post-processing step — it transforms primitive style objects.
+ * Does NOT consume PRNG values. Does NOT call Heerich.
+ *
+ * Priority rules:
+ * - When `config.hatchingEnabled`: adds `hatch: { angle, period, stroke }` to each
+ *   primitive's style sub-objects (default, top, left, right — whichever exist).
+ *   Higher density maps to lower period: period = 6 - density.
+ * - When `config.smoothEnabled` and NOT `config.hatchingEnabled`: sets stroke equal
+ *   to fill on each primitive's style sub-objects (Heerich smooth solid pattern —
+ *   stroke === fill hides internal grid lines).
+ * - When both enabled: hatching wins — include `hatch`, do NOT apply smooth.
+ * - When neither enabled: no-op, returns primitives unchanged.
+ *
+ * @param {Array<object>} primitives - Array of primitive objects with style objects
+ * @param {object} config - Configuration object
+ * @param {boolean} [config.hatchingEnabled=false] - Whether hatching is active
+ * @param {number} [config.hatchAngle=45] - Hatch angle in degrees (0–180)
+ * @param {number} [config.hatchDensity=3] - Hatch density (1–5), maps to period (higher density = lower period)
+ * @param {string} [config.hatchColor='#000000'] - Hatch stroke color (hex string)
+ * @param {boolean} [config.smoothEnabled=false] - Whether smooth solids are active
+ * @returns {Array<object>} The primitives array (mutated in place) with updated styles
+ */
+export function applyHatchingAndSmooth(primitives, config) {
+  if (!config.hatchingEnabled && !config.smoothEnabled) {
+    return primitives
+  }
+
+  if (config.hatchingEnabled) {
+    const angle = config.hatchAngle != null ? config.hatchAngle : 45
+    const density = config.hatchDensity != null ? config.hatchDensity : 3
+    const color = config.hatchColor || '#000000'
+    // Higher density = lower period: density 1 → period 5, density 5 → period 1
+    const period = 6 - density
+
+    const hatch = { angle, period, stroke: color }
+
+    for (const prim of primitives) {
+      if (!prim.style) continue
+
+      // Add hatch to each style sub-object that exists
+      const styleKeys = Object.keys(prim.style)
+      for (const key of styleKeys) {
+        if (prim.style[key] && typeof prim.style[key] === 'object') {
+          prim.style[key].hatch = { ...hatch }
+        }
+      }
+    }
+  } else if (config.smoothEnabled) {
+    // Smooth solid: set stroke equal to fill on each style sub-object
+    for (const prim of primitives) {
+      if (!prim.style) continue
+
+      const styleKeys = Object.keys(prim.style)
+      for (const key of styleKeys) {
+        if (prim.style[key] && typeof prim.style[key] === 'object' && prim.style[key].fill) {
+          prim.style[key].stroke = prim.style[key].fill
+        }
+      }
+    }
+  }
+
+  return primitives
+}
+
+// ─── Per-Shape Gap Post-Processing ───────────────────────────
+
+/**
+ * Applies per-shape gap values to primitives (step 15 in the pipeline).
+ * This step DOES consume PRNG values (one per primitive when enabled).
+ * It does NOT call Heerich — it adds a `gap` property to each primitive.
+ *
+ * When `config.perShapeGapEnabled` is false (or not provided), returns primitives unchanged (no-op, no PRNG consumption).
+ *
+ * When enabled:
+ * - If gapMin > gapMax, swap them before generating values
+ * - Assign `gap: prng.floatRange(gapMin, gapMax)` to each primitive
+ * - Clamp the gap value to [0, 0.2]
+ *
+ * @param {Array<object>} primitives - Array of primitive objects
+ * @param {import('./SeededPRNG.js').SeededPRNG} prng - Seeded PRNG instance
+ * @param {object} config - Configuration object
+ * @param {boolean} [config.perShapeGapEnabled=false] - Whether per-shape gap is active
+ * @param {number} [config.gapMin=0] - Minimum gap value (0–0.2)
+ * @param {number} [config.gapMax=0.2] - Maximum gap value (0–0.2)
+ * @returns {Array<object>} The primitives array (mutated in place) with gap properties
+ */
+export function applyPerShapeGap(primitives, prng, config) {
+  if (!config.perShapeGapEnabled) {
+    return primitives
+  }
+
+  let gapMin = config.gapMin != null ? config.gapMin : 0
+  let gapMax = config.gapMax != null ? config.gapMax : 0.2
+
+  // Swap if min > max
+  if (gapMin > gapMax) {
+    const tmp = gapMin
+    gapMin = gapMax
+    gapMax = tmp
+  }
+
+  for (const prim of primitives) {
+    const rawGap = prng.floatRange(gapMin, gapMax)
+    // Clamp to [0, 0.2]
+    prim.gap = Math.max(0, Math.min(0.2, rawGap))
+  }
+
+  return primitives
+}
+
 // ─── Heerich Execution ───────────────────────────────────────
 
 /**
@@ -685,7 +1107,7 @@ function callHeerich(heerich, prim) {
 /** Valid boolean mode strings */
 const VALID_BOOLEAN_MODES = ['union', 'subtract', 'intersect', 'exclude']
 
-export { VALID_BOOLEAN_MODES }
+export { VALID_BOOLEAN_MODES, parseHex, lerpColor }
 
 /**
  * @typedef {Object} CompositionConfig
@@ -948,7 +1370,36 @@ export const CompositionEngine = {
       totalCalls -= excessAccents
     }
 
-    // Build the composition plan
+    // ─── Post-Processing Pipeline (steps 10–15) ─────────────────
+    // Collect all primitives into a flat array for post-processing.
+    // When features are disabled (default), each step is a no-op returning
+    // primitives unchanged without consuming PRNG values.
+    const allPrimitives = []
+    for (const cluster of clusters) {
+      allPrimitives.push(...cluster.primitives)
+    }
+    allPrimitives.push(...booleanOps)
+    allPrimitives.push(...accentPrimitives)
+
+    // Step 10: Rotation — permutes position/size components
+    applyRotation(allPrimitives, config)
+
+    // Step 11: Scaling — multiplies size dimensions
+    applyScaling(allPrimitives, config)
+
+    // Step 12: Functional Style — position-based color gradients
+    applyFunctionalStyle(allPrimitives, config)
+
+    // Step 13: Hatching & Smooth — adds hatch/smooth to style objects
+    applyHatchingAndSmooth(allPrimitives, config)
+
+    // Step 14: Per-Face Style — restructures style to top/left/right
+    applyPerFaceStyle(allPrimitives, config)
+
+    // Step 15: Per-Shape Gap — assigns per-primitive gap values (consumes PRNG)
+    applyPerShapeGap(allPrimitives, prng, config)
+
+    // Build the composition plan with expanded metadata
     const plan = {
       clusters,
       booleanOps,
@@ -959,12 +1410,18 @@ export const CompositionEngine = {
       primitiveCount: totalCalls,
       booleanSubtraction,
       booleanMode,
+      rotation: config.rotationEnabled ? { axis: config.rotationAxis || 'Y', amount: config.rotationAmount || 0 } : null,
+      scaling: config.scalingEnabled ? { mode: config.scalingMode || 'static', scaleX: config.scaleX, scaleY: config.scaleY, scaleZ: config.scaleZ } : null,
+      functionalStyle: config.functionalStyleEnabled ? { function: config.styleFunction || 'gradient-x', startColor: config.styleStartColor, endColor: config.styleEndColor } : null,
+      hatching: config.hatchingEnabled ? { angle: config.hatchAngle, density: config.hatchDensity, color: config.hatchColor } : null,
+      perFaceEnabled: !!config.perFaceEnabled,
+      perShapeGapEnabled: !!config.perShapeGapEnabled,
     }
 
-    // 12. Execute all Heerich API calls
+    // 16. Execute all Heerich API calls
     executeHeerichCalls(heerich, plan)
 
-    // 13. Get SVG output from Heerich
+    // 17. Get SVG output from Heerich
     const svgString = heerich.toSVG({ padding: 40 })
 
     return { plan, svgString }
