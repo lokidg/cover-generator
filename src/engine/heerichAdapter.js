@@ -46,8 +46,21 @@ export function loadHeerich() {
  * - tile: number or [x, y, z] — voxel tile size
  * - camera: { type, angle, distance }
  * - style: default fill/stroke style
+ * - gap: scene-level gap between voxels
  *
- * @param {{ cameraAngle: number, gridTileSize: number, width: number, height: number }} config
+ * @param {Object} config
+ * @param {string} [config.cameraType='oblique'] - 'oblique'|'perspective'|'orthographic'|'isometric'
+ * @param {number} [config.cameraAngle=315] - 0–360
+ * @param {number} [config.cameraDistance=20] - 1–80
+ * @param {number} [config.gridTileSize=18] - 8–32
+ * @param {number} [config.gap=0] - 0–0.2
+ * @param {number} [config.outlineWidth=0] - 0–5
+ * @param {string} [config.outlineColor='#000000'] - hex color
+ * @param {string} [config.fillColor='#E0E0E3'] - hex color
+ * @param {string} [config.strokeColor='rgba(0,0,0,0.06)'] - stroke color
+ * @param {number} [config.strokeWidth=0.5] - 0–3
+ * @param {number} [config.width]
+ * @param {number} [config.height]
  * @returns {any} A Heerich instance configured with the given parameters.
  */
 export function createHeerichInstance(config) {
@@ -55,20 +68,38 @@ export function createHeerichInstance(config) {
     throw new Error('Rendering engine failed to load. Check your internet connection.')
   }
 
-  const { cameraAngle = 315, gridTileSize = 18 } = config
+  const {
+    cameraType = 'oblique',
+    cameraAngle = 315,
+    cameraDistance = 20,
+    gridTileSize = 18,
+    gap = 0,
+    outlineWidth = 0,
+    outlineColor = '#000000',
+    fillColor = '#E0E0E3',
+    strokeColor = 'rgba(0,0,0,0.06)',
+    strokeWidth = 0.5,
+  } = config
+
+  const style = {
+    fill: fillColor,
+    stroke: strokeColor,
+    strokeWidth,
+  }
+
+  if (outlineWidth > 0) {
+    style.outlineWidth = outlineWidth
+    style.outlineColor = outlineColor
+  }
 
   return new HeerichClass({
     tile: [gridTileSize, gridTileSize],
     camera: {
-      type: 'oblique',
+      type: cameraType,
       angle: cameraAngle,
-      distance: 20,
+      distance: cameraDistance,
     },
-    style: {
-      fill: '#E0E0E3',
-      stroke: 'rgba(0,0,0,0.06)',
-      strokeWidth: 0.5,
-    },
-    gap: 0,
+    style,
+    gap,
   })
 }
