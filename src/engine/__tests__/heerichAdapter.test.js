@@ -1,33 +1,23 @@
 // @vitest-environment node
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
-// We test the module's export structure and behavior.
-// Actual CDN loading can't be tested in Node, so we mock the DOM/window layer.
-
 describe('heerichAdapter', () => {
   let loadHeerich, createHeerichInstance
-  let mockScripts
+  let MockHeerich
+  let constructorSpy
 
   beforeEach(async () => {
-    // Reset module cache so each test gets a fresh loadPromise
     vi.resetModules()
 
-    mockScripts = []
-
-    // Set up minimal DOM mocks on globalThis
-    globalThis.window = globalThis
-    globalThis.document = {
-      createElement: (tag) => {
-        const el = { tagName: tag.toUpperCase(), src: '', async: false, onload: null, onerror: null }
-        return el
-      },
-      head: {
-        appendChild: (script) => {
-          mockScripts.push(script)
-        },
-      },
+    constructorSpy = vi.fn()
+    MockHeerich = class {
+      constructor(config) {
+        constructorSpy(config)
+      }
     }
-    delete globalThis.window.heerich
+
+    // Mock the dynamic import to return our mock Heerich class
+    vi.stubGlobal('window', globalThis)
 
     const mod = await import('../heerichAdapter.js')
     loadHeerich = mod.loadHeerich
@@ -36,8 +26,7 @@ describe('heerichAdapter', () => {
 
   afterEach(() => {
     vi.restoreAllMocks()
-    delete globalThis.window.heerich
-    delete globalThis.document
+    vi.unstubAllGlobals()
   })
 
   describe('module exports', () => {
@@ -54,145 +43,212 @@ describe('heerichAdapter', () => {
     it('returns a Promise', () => {
       const result = loadHeerich()
       expect(result).toBeInstanceOf(Promise)
-
-      // Simulate successful load to avoid unhandled rejection
-      const script = mockScripts[0]
-      globalThis.window.heerich = class MockHeerich {}
-      script.onload()
+      // Let it reject gracefully (CDN not available in test)
+      result.catch(() => {})
     })
 
-    it('resolves immediately if window.heerich is already available', async () => {
-      // Need fresh module with heerich already set
-      vi.resetModules()
-      globalThis.window.heerich = class MockHeerich {}
-      const mod = await import('../heerichAdapter.js')
-
-      const result = await mod.loadHeerich()
-      expect(result).toBe(globalThis.window.heerich)
-    })
-
-    it('injects a script element into document.head', () => {
-      loadHeerich()
-
-      expect(mockScripts).toHaveLength(1)
-      const script = mockScripts[0]
-      expect(script.tagName).toBe('SCRIPT')
-      expect(script.src).toContain('heerich')
-      expect(script.async).toBe(true)
-
-      // Clean up
-      globalThis.window.heerich = class MockHeerich {}
-      script.onload()
-    })
-
-    it('resolves with window.heerich on successful load', async () => {
-      const MockHeerich = class {}
-      const promise = loadHeerich()
-
-      const script = mockScripts[0]
-      globalThis.window.heerich = MockHeerich
-      script.onload()
-
-      const result = await promise
-      expect(result).toBe(MockHeerich)
-    })
-
-    it('rejects with descriptive error on script load failure', async () => {
-      const promise = loadHeerich()
-
-      const script = mockScripts[0]
-      script.onerror()
-
-      await expect(promise).rejects.toThrow(
-        'Rendering engine failed to load. Check your internet connection.'
-      )
-    })
-
-    it('rejects if script loads but window.heerich is not set', async () => {
-      const promise = loadHeerich()
-
-      const script = mockScripts[0]
-      // onload fires but window.heerich remains undefined
-      script.onload()
-
-      await expect(promise).rejects.toThrow(
-        'Rendering engine failed to load. Check your internet connection.'
-      )
-    })
-
-    it('caches the promise on subsequent calls (only one script tag)', async () => {
+    it('caches the promise on subsequent calls', () => {
       const p1 = loadHeerich()
       const p2 = loadHeerich()
-
       expect(p1).toBe(p2)
-      expect(mockScripts).toHaveLength(1)
+      // Let it reject gracefully
+      p1.catch(() => {})
+    })
 
-      // Resolve to avoid unhandled rejection
-      globalThis.window.heerich = class MockHeerich {}
-      mockScripts[0].onload()
-      await p1
+    it('rejects with descriptive error when CDN is unavailable', async () => {
+      await expect(loadHeerich()).rejects.toThrow(
+        'Rendering engine failed to load. Check your internet connection.'
+      )
     })
 
     it('allows retry after a failed load', async () => {
       // First call fails
-      const p1 = loadHeerich()
-      mockScripts[0].onerror()
-      await expect(p1).rejects.toThrow()
+      await expect(loadHeerich()).rejects.toThrow()
 
       // Second call should retry (loadPromise was cleared on failure)
       const p2 = loadHeerich()
-      expect(mockScripts).toHaveLength(2)
-
-      globalThis.window.heerich = class MockHeerich {}
-      mockScripts[1].onload()
-
-      const result = await p2
-      expect(result).toBe(globalThis.window.heerich)
+      expect(p2).toBeInstanceOf(Promise)
+      await expect(p2).rejects.toThrow()
     })
   })
 
   describe('createHeerichInstance()', () => {
-    it('throws if window.heerich is not loaded', () => {
+    it('throws if Heerich is not loaded', () => {
       expect(() =>
         createHeerichInstance({ cameraAngle: 315, gridTileSize: 18, width: 1500, height: 500 })
       ).toThrow('Rendering engine failed to load. Check your internet connection.')
     })
+  })
 
-    it('creates an instance with the provided config', () => {
-      const constructorSpy = vi.fn()
-      globalThis.window.heerich = class MockHeerich {
+  describe('createHeerichInstance() — with loaded Heerich', () => {
+    // For these tests we need HeerichClass to be set.
+    // We achieve this by mocking the dynamic import at module level.
+    let createHeerichInstance
+
+    beforeEach(async () => {
+      vi.resetModules()
+
+      constructorSpy = vi.fn()
+      MockHeerich = class {
         constructor(config) {
           constructorSpy(config)
         }
       }
 
+      // Mock the CDN import to return our mock module
+      vi.stubGlobal('window', globalThis)
+      vi.doMock(
+        'https://cdn.jsdelivr.net/npm/heerich@latest/dist/heerich.js',
+        () => ({ Heerich: MockHeerich }),
+        { virtual: true }
+      )
+
+      const mod = await import('../heerichAdapter.js')
+      // Load Heerich so HeerichClass is set
+      await mod.loadHeerich()
+      createHeerichInstance = mod.createHeerichInstance
+    })
+
+    it('creates an instance with default config (backward compat)', () => {
       const config = { cameraAngle: 315, gridTileSize: 18, width: 1500, height: 500 }
       const instance = createHeerichInstance(config)
 
       expect(constructorSpy).toHaveBeenCalledWith({
+        tile: [18, 18],
+        camera: { type: 'oblique', angle: 315, distance: 20 },
+        style: { fill: '#E0E0E3', stroke: 'rgba(0,0,0,0.06)', strokeWidth: 0.5 },
+        gap: 0,
+      })
+      expect(instance).toBeInstanceOf(MockHeerich)
+    })
+
+    it('passes custom camera angle and grid size', () => {
+      createHeerichInstance({ cameraAngle: 45, gridTileSize: 32, width: 820, height: 312 })
+
+      expect(constructorSpy).toHaveBeenCalledWith({
+        tile: [32, 32],
+        camera: { type: 'oblique', angle: 45, distance: 20 },
+        style: { fill: '#E0E0E3', stroke: 'rgba(0,0,0,0.06)', strokeWidth: 0.5 },
+        gap: 0,
+      })
+    })
+
+    it('passes camera type and distance when provided', () => {
+      createHeerichInstance({
+        cameraType: 'perspective',
+        cameraAngle: 270,
+        cameraDistance: 40,
+        gridTileSize: 18,
+        width: 1500,
+        height: 500,
+      })
+
+      expect(constructorSpy).toHaveBeenCalledWith({
+        tile: [18, 18],
+        camera: { type: 'perspective', angle: 270, distance: 40 },
+        style: { fill: '#E0E0E3', stroke: 'rgba(0,0,0,0.06)', strokeWidth: 0.5 },
+        gap: 0,
+      })
+    })
+
+    it('passes all camera types correctly', () => {
+      const types = ['oblique', 'perspective', 'orthographic', 'isometric']
+      for (const type of types) {
+        constructorSpy.mockClear()
+        createHeerichInstance({
+          cameraType: type,
+          cameraAngle: 315,
+          gridTileSize: 18,
+          width: 1500,
+          height: 500,
+        })
+        const calledConfig = constructorSpy.mock.calls[0][0]
+        expect(calledConfig.camera.type).toBe(type)
+      }
+    })
+
+    it('passes gap to Heerich constructor', () => {
+      createHeerichInstance({
+        cameraAngle: 315,
+        gridTileSize: 18,
+        gap: 0.1,
+        width: 1500,
+        height: 500,
+      })
+
+      expect(constructorSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ gap: 0.1 })
+      )
+    })
+
+    it('includes outline properties when outlineWidth > 0', () => {
+      createHeerichInstance({
+        cameraAngle: 315,
+        gridTileSize: 18,
+        outlineWidth: 2,
+        outlineColor: '#FF0000',
+        width: 1500,
+        height: 500,
+      })
+
+      const calledConfig = constructorSpy.mock.calls[0][0]
+      expect(calledConfig.style.outlineWidth).toBe(2)
+      expect(calledConfig.style.outlineColor).toBe('#FF0000')
+    })
+
+    it('omits outline properties when outlineWidth is 0', () => {
+      createHeerichInstance({
+        cameraAngle: 315,
+        gridTileSize: 18,
+        outlineWidth: 0,
+        outlineColor: '#FF0000',
+        width: 1500,
+        height: 500,
+      })
+
+      const calledConfig = constructorSpy.mock.calls[0][0]
+      expect(calledConfig.style).not.toHaveProperty('outlineWidth')
+      expect(calledConfig.style).not.toHaveProperty('outlineColor')
+    })
+
+    it('omits outline properties when outlineWidth is not provided', () => {
+      createHeerichInstance({
         cameraAngle: 315,
         gridTileSize: 18,
         width: 1500,
         height: 500,
       })
-      expect(instance).toBeInstanceOf(globalThis.window.heerich)
+
+      const calledConfig = constructorSpy.mock.calls[0][0]
+      expect(calledConfig.style).not.toHaveProperty('outlineWidth')
+      expect(calledConfig.style).not.toHaveProperty('outlineColor')
     })
 
-    it('passes custom camera angle and grid size', () => {
-      const constructorSpy = vi.fn()
-      globalThis.window.heerich = class MockHeerich {
-        constructor(config) {
-          constructorSpy(config)
-        }
-      }
+    it('passes custom fill and stroke colors', () => {
+      createHeerichInstance({
+        cameraAngle: 315,
+        gridTileSize: 18,
+        fillColor: '#4F46E5',
+        strokeColor: '#000000',
+        strokeWidth: 1.5,
+        width: 1500,
+        height: 500,
+      })
 
-      createHeerichInstance({ cameraAngle: 45, gridTileSize: 32, width: 820, height: 312 })
+      const calledConfig = constructorSpy.mock.calls[0][0]
+      expect(calledConfig.style.fill).toBe('#4F46E5')
+      expect(calledConfig.style.stroke).toBe('#000000')
+      expect(calledConfig.style.strokeWidth).toBe(1.5)
+    })
+
+    it('defaults to oblique, angle 315, distance 20, gap 0 when no params provided', () => {
+      createHeerichInstance({})
 
       expect(constructorSpy).toHaveBeenCalledWith({
-        cameraAngle: 45,
-        gridTileSize: 32,
-        width: 820,
-        height: 312,
+        tile: [18, 18],
+        camera: { type: 'oblique', angle: 315, distance: 20 },
+        style: { fill: '#E0E0E3', stroke: 'rgba(0,0,0,0.06)', strokeWidth: 0.5 },
+        gap: 0,
       })
     })
   })
