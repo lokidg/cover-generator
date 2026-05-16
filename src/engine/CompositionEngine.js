@@ -93,15 +93,17 @@ function accentStyle(accentColor, opacity) {
  */
 function generateClusterBounds(prng, count, gridSize) {
   const bounds = []
-  const zoneWidth = Math.floor((gridSize - 2) / count)
+  // Use the full grid space — clusters overlap for denser coverage
+  const zoneWidth = Math.floor(gridSize / count)
 
   for (let i = 0; i < count; i++) {
-    const xMin = Math.min(i * zoneWidth + prng.intRange(0, 1), gridSize - 4)
-    const xMax = Math.min(xMin + prng.intRange(4, Math.max(5, zoneWidth)), gridSize)
-    const zMin = prng.intRange(0, 4)
-    const zMax = Math.min(zMin + prng.intRange(4, 8), gridSize)
-    const yMin = prng.intRange(0, 2)
-    const yMax = Math.min(yMin + prng.intRange(4, 10), gridSize)
+    // Clusters span most of the grid with overlap
+    const xMin = Math.max(0, i * zoneWidth - prng.intRange(1, 3))
+    const xMax = Math.min(gridSize, xMin + zoneWidth + prng.intRange(2, 6))
+    const zMin = prng.intRange(0, Math.floor(gridSize * 0.2))
+    const zMax = Math.min(gridSize, zMin + prng.intRange(Math.floor(gridSize * 0.5), gridSize))
+    const yMin = prng.intRange(0, Math.floor(gridSize * 0.1))
+    const yMax = Math.min(gridSize, yMin + prng.intRange(Math.floor(gridSize * 0.6), gridSize))
 
     bounds.push({
       x: [xMin, xMax],
@@ -128,6 +130,10 @@ function populateCluster(prng, bounds, dominantType, allowedTypes, primCount, bg
   const dominantCount = Math.ceil(primCount * GestaltConstraints.DOMINANT_TYPE_MIN_RATIO)
   const otherTypes = allowedTypes.filter((t) => t !== dominantType)
 
+  const xSpan = Math.max(4, bounds.x[1] - bounds.x[0])
+  const ySpan = Math.max(4, bounds.y[1] - bounds.y[0])
+  const zSpan = Math.max(4, bounds.z[1] - bounds.z[0])
+
   for (let i = 0; i < primCount; i++) {
     const type =
       i < dominantCount
@@ -138,10 +144,11 @@ function populateCluster(prng, bounds, dominantType, allowedTypes, primCount, bg
       prng.intRange(bounds.y[0], bounds.y[1]),
       prng.intRange(bounds.z[0], bounds.z[1]),
     ]
+    // Larger sizes — 30-80% of the cluster span
     const size = [
-      prng.intRange(2, Math.max(3, bounds.x[1] - bounds.x[0])),
-      prng.intRange(2, Math.max(3, bounds.y[1] - bounds.y[0])),
-      prng.intRange(2, Math.max(3, bounds.z[1] - bounds.z[0])),
+      prng.intRange(Math.max(2, Math.floor(xSpan * 0.3)), Math.max(3, Math.floor(xSpan * 0.8))),
+      prng.intRange(Math.max(2, Math.floor(ySpan * 0.3)), Math.max(3, Math.floor(ySpan * 0.8))),
+      prng.intRange(Math.max(2, Math.floor(zSpan * 0.3)), Math.max(3, Math.floor(zSpan * 0.8))),
     ]
     // Clamp position + size to stay within grid
     const clampedPos = [
@@ -298,12 +305,18 @@ function executeHeerichCalls(heerich, plan) {
 
 /**
  * Calls the appropriate Heerich method for a primitive.
+ * Real Heerich API: applyGeometry({ type, x, y, z, w, h, d, style, mode })
  * @param {object} heerich - Heerich instance
- * @param {object} prim - Primitive object
+ * @param {object} prim - Primitive object with position [x,y,z] and size [w,h,d]
  */
 function callHeerich(heerich, prim) {
+  if (!prim.position || !prim.size) {
+    console.warn('Skipping primitive with missing position/size:', prim)
+    return
+  }
+
   const params = {
-    type: prim.type === 'addBox' ? 'box' : prim.type === 'removeBox' ? 'box' : prim.type,
+    type: 'box',
     position: prim.position,
     size: prim.size,
   }

@@ -18,16 +18,23 @@ import { rasterizeSvg } from './rendering/svgToCanvas.js'
 import { renderTextOverlay } from './rendering/textOverlay.js'
 
 export function App() {
-  const { params, svgString, isLoading, error } = useCompositionParams()
+  // Action handler ref — updated each render, avoids circular deps with hooks
+  const actionHandlerRef = useRef(null)
+  const onAction = useCallback((action) => {
+    actionHandlerRef.current?.(action)
+  }, [])
+
+  const { params, svgString, isLoading, error, regenerate } = useCompositionParams(onAction)
   const { width, height, profile, error: dimError } = useDimensions(
-    params.profile,
-    params.customWidth,
-    params.customHeight
+    params?.profile,
+    Math.round(params?.customWidth || 1584),
+    Math.round(params?.customHeight || 396)
   )
   const { presets, save, load, remove } = usePresets()
 
   const [isExporting, setIsExporting] = useState(false)
   const [gifProgress, setGifProgress] = useState({ current: 0, total: 0, visible: false })
+  const [showAdvanced, setShowAdvanced] = useState(false) // kept for body class toggle
 
   // Ref to access the canvas element for export
   const canvasRef = useRef(null)
@@ -42,6 +49,9 @@ export function App() {
     textOpacity: params.textOpacity,
     horizontalAlign: params.horizontalAlign || 'center',
     verticalAlign: params.verticalAlign || 'bottom',
+    horizontalPosition: params.horizontalAlign || 'center',
+    padding: params.textPadding || 40,
+    gap: params.textGap || 8,
   }
 
   // Grab canvas ref from the CanvasViewport via a callback on the DOM
@@ -122,69 +132,74 @@ export function App() {
 
   // --- Preset Handlers ---
 
-  // Handle DialKit action callbacks via useEffect watchers
-  const prevActionsRef = useRef({})
-
-  useEffect(() => {
-    // Detect DialKit action triggers by comparing with previous values
-    const prev = prevActionsRef.current
-
-    if (params.exportPng && params.exportPng !== prev.exportPng) {
-      handleExportPng()
-    }
-    if (params.exportGif && params.exportGif !== prev.exportGif) {
-      handleExportGif()
-    }
-    if (params.savePreset && params.savePreset !== prev.savePreset) {
-      const label = prompt('Enter preset name:')
-      if (label) {
-        const presetParams = {
-          seed: params.seed,
-          clusterCount: params.clusterCount,
-          accentColor: params.accentColor,
-          accentOpacity: params.accentOpacity,
-          surfaceOpacity: params.surfaceOpacity,
-          primitiveCount: params.primitiveCount,
-          booleanSubtraction: params.booleanSubtraction,
-          cameraAngle: params.cameraAngle,
-          gridTileSize: params.gridTileSize,
-          name: params.name || '',
-          title: params.title || '',
-          fontSize: params.fontSize,
-          titleFontSize: params.titleFontSize,
-          textColor: params.textColor,
-          textOpacity: params.textOpacity,
-          horizontalAlign: params.horizontalAlign || 'center',
-          verticalAlign: params.verticalAlign || 'bottom',
-          dimensionProfile: params.profile || 'LinkedIn (1584×396)',
-          customWidth: params.customWidth,
-          customHeight: params.customHeight,
+  // Handle DialKit action callbacks
+  const handleAction = useCallback((action) => {
+    switch (action) {
+      case 'randomize':
+        // Handled by useCompositionParams internally
+        break
+      case 'exportPng':
+        handleExportPng()
+        break
+      case 'exportGif':
+        handleExportGif()
+        break
+      case 'savePreset': {
+        const label = prompt('Enter preset name:')
+        if (label) {
+          const presetParams = {
+            seed: params.seed,
+            clusterCount: params.clusterCount,
+            accentColor: params.accentColor,
+            accentOpacity: params.accentOpacity,
+            surfaceOpacity: params.surfaceOpacity,
+            primitiveCount: params.primitiveCount,
+            booleanSubtraction: params.booleanSubtraction,
+            cameraAngle: params.cameraAngle,
+            gridTileSize: params.gridTileSize,
+            name: params.name || '',
+            title: params.title || '',
+            fontSize: params.fontSize,
+            titleFontSize: params.titleFontSize,
+            textColor: params.textColor,
+            textOpacity: params.textOpacity,
+            horizontalAlign: params.horizontalAlign || 'center',
+            verticalAlign: params.verticalAlign || 'bottom',
+            dimensionProfile: params.profile || 'LinkedIn (1584×396)',
+            customWidth: params.customWidth,
+            customHeight: params.customHeight,
+          }
+          const result = save(label, presetParams)
+          if (!result.success) {
+            console.error('Save preset failed:', result.error)
+          }
         }
-        const result = save(label, presetParams)
-        if (!result.success) {
-          console.error('Save preset failed:', result.error)
+        break
+      }
+      case 'loadPreset':
+        if (presets.length > 0) {
+          const latest = presets[presets.length - 1]
+          load(latest.id)
         }
-      }
+        break
     }
-    if (params.loadPreset && params.loadPreset !== prev.loadPreset) {
-      // Load the most recent preset as a simple default behavior
-      if (presets.length > 0) {
-        const latest = presets[presets.length - 1]
-        load(latest.id)
-      }
-    }
+  }, [params, handleExportPng, handleExportGif, save, load, presets])
 
-    prevActionsRef.current = {
-      exportPng: params.exportPng,
-      exportGif: params.exportGif,
-      savePreset: params.savePreset,
-      loadPreset: params.loadPreset,
-      randomize: params.randomize,
-    }
-  }, [params.exportPng, params.exportGif, params.savePreset, params.loadPreset, params.randomize, handleExportPng, handleExportGif, save, load, presets])
+  // Keep the action handler ref updated
+  actionHandlerRef.current = handleAction
 
   return (
-    <div className="app-layout">
+    <div className="app-layout" style={styles.appLayout}>
+      {/* Floating refresh button */}
+      <button
+        onClick={regenerate}
+        disabled={isLoading}
+        style={styles.refreshButton}
+        title="Regenerate composition"
+      >
+        ↻
+      </button>
+
       {error && (
         <div className="error-banner" style={styles.errorBanner}>
           {error}
@@ -197,12 +212,16 @@ export function App() {
       )}
 
       <main style={styles.main}>
-        <CanvasViewport
-          svgString={svgString}
-          width={width || 1584}
-          height={height || 396}
-          textOverlayConfig={textOverlayConfig}
-        />
+        {isLoading && !svgString ? (
+          <div style={styles.loading}>Loading engine...</div>
+        ) : (
+          <CanvasViewport
+            svgString={svgString}
+            width={width || 1584}
+            height={height || 396}
+            textOverlayConfig={textOverlayConfig}
+          />
+        )}
       </main>
 
       <Toolbar
@@ -223,12 +242,23 @@ export function App() {
 }
 
 const styles = {
+  appLayout: {
+    display: 'flex',
+    flexDirection: 'column',
+    width: '100%',
+    height: '100%',
+  },
   main: {
     flex: 1,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
+  },
+  loading: {
+    fontFamily: 'var(--font-body)',
+    fontSize: 'var(--text-body-lg)',
+    color: 'var(--color-secondary)',
   },
   errorBanner: {
     padding: 'var(--space-3) var(--space-4)',
@@ -238,4 +268,228 @@ const styles = {
     fontFamily: 'var(--font-body)',
     borderBottom: '1px solid #FECACA',
   },
+  refreshButton: {
+    position: 'fixed',
+    top: 16,
+    left: 16,
+    zIndex: 1000,
+    width: 44,
+    height: 44,
+    borderRadius: '50%',
+    border: '1px solid var(--color-border)',
+    background: 'var(--color-surface-elevated)',
+    color: 'var(--color-primary)',
+    fontSize: 20,
+    fontWeight: 700,
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    boxShadow: 'var(--shadow-level-2)',
+    transition: 'transform 0.2s ease',
+  },
 }
+
+const moreStyles = {
+  helpButton: {
+    position: 'fixed',
+    top: 16,
+    left: 68,
+    zIndex: 1000,
+    width: 44,
+    height: 44,
+    borderRadius: '50%',
+    border: '1px solid var(--color-border)',
+    background: 'var(--color-surface-elevated)',
+    color: 'var(--color-accent)',
+    fontSize: 18,
+    fontWeight: 700,
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    boxShadow: 'var(--shadow-level-1)',
+    fontFamily: 'var(--font-body)',
+  },
+  helpPopover: {
+    position: 'fixed',
+    top: 68,
+    left: 16,
+    zIndex: 1001,
+    width: 320,
+    maxHeight: '70vh',
+    overflowY: 'auto',
+    background: 'var(--color-surface-elevated)',
+    border: '1px solid var(--color-border)',
+    borderRadius: 'var(--rounded-lg)',
+    boxShadow: 'var(--shadow-level-2)',
+    fontFamily: 'var(--font-body)',
+    fontSize: 'var(--text-body-sm)',
+    color: 'var(--color-primary)',
+  },
+  helpHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '12px 16px',
+    borderBottom: '1px solid var(--color-border)',
+  },
+  helpClose: {
+    background: 'none',
+    border: 'none',
+    fontSize: 16,
+    cursor: 'pointer',
+    color: 'var(--color-secondary)',
+  },
+  helpContent: {
+    padding: '12px 16px',
+    lineHeight: 1.6,
+  },
+}
+
+// Merge styles
+Object.assign(styles, moreStyles)
+
+Object.assign(styles, {
+  textInputPanel: {
+    position: 'fixed',
+    top: 68,
+    left: 16,
+    zIndex: 999,
+    background: '#1C1C1C',
+    border: '1px solid rgba(255,255,255,0.08)',
+    borderRadius: 8,
+    padding: '14px 16px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 10,
+    boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    fontSize: 12,
+    width: 240,
+    maxHeight: 'calc(100vh - 100px)',
+    overflowY: 'auto',
+  },
+  inputLabel: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 5,
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 10,
+    fontWeight: 500,
+    textTransform: 'uppercase',
+    letterSpacing: '0.06em',
+  },
+  textInput: {
+    padding: '7px 10px',
+    border: '1px solid rgba(255,255,255,0.1)',
+    borderRadius: 5,
+    fontSize: 13,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    background: 'rgba(255,255,255,0.05)',
+    color: '#FFFFFF',
+    outline: 'none',
+    width: '100%',
+    transition: 'border-color 0.15s ease',
+  },
+  colorInput: {
+    width: 32,
+    height: 24,
+    border: '1px solid rgba(255,255,255,0.1)',
+    borderRadius: 4,
+    cursor: 'pointer',
+    padding: 1,
+    background: 'transparent',
+  },
+})
+
+Object.assign(styles, {
+  positionGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(3, 1fr)',
+    gap: 5,
+    width: 66,
+    marginTop: 4,
+  },
+  positionDot: {
+    width: 16,
+    height: 16,
+    borderRadius: '50%',
+    border: '2px solid rgba(255,255,255,0.15)',
+    cursor: 'pointer',
+    padding: 0,
+    transition: 'background 0.15s ease, border-color 0.15s ease',
+    background: 'rgba(255,255,255,0.08)',
+  },
+  alignRow: {
+    display: 'flex',
+    gap: 4,
+    marginTop: 4,
+  },
+  alignButton: {
+    width: 32,
+    height: 26,
+    border: '1px solid rgba(255,255,255,0.1)',
+    borderRadius: 5,
+    cursor: 'pointer',
+    fontSize: 13,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    transition: 'all 0.15s ease',
+    background: 'rgba(255,255,255,0.05)',
+    color: 'rgba(255,255,255,0.5)',
+  },
+})
+
+Object.assign(styles, {
+  advancedToggle: {
+    marginTop: 4,
+    padding: '6px 12px',
+    border: '1px solid rgba(255,255,255,0.1)',
+    borderRadius: 5,
+    background: 'rgba(255,255,255,0.05)',
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 11,
+    fontWeight: 500,
+    cursor: 'pointer',
+    textAlign: 'center',
+    transition: 'all 0.15s ease',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  },
+})
+
+Object.assign(styles, {
+  sectionHeader: {
+    fontSize: 10,
+    fontWeight: 600,
+    letterSpacing: '0.1em',
+    textTransform: 'uppercase',
+    color: 'rgba(255,255,255,0.35)',
+    paddingTop: 8,
+    paddingBottom: 4,
+    borderTop: '1px solid rgba(255,255,255,0.06)',
+    marginTop: 4,
+  },
+  sliderRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+  },
+  slider: {
+    flex: 1,
+    height: 4,
+    appearance: 'none',
+    background: 'rgba(255,255,255,0.12)',
+    borderRadius: 2,
+    outline: 'none',
+    cursor: 'pointer',
+  },
+  sliderValue: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.7)',
+    minWidth: 32,
+    textAlign: 'right',
+    fontVariantNumeric: 'tabular-nums',
+  },
+})

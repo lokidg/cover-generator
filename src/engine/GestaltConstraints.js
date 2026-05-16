@@ -21,10 +21,10 @@ export const GestaltConstraints = Object.freeze({
   FOREGROUND_OPACITY_RANGE: Object.freeze([0.10, 0.25]),
 
   /** Primitive count bounds per composition */
-  PRIMITIVE_COUNT_RANGE: Object.freeze([8, 20]),
+  PRIMITIVE_COUNT_RANGE: Object.freeze([8, 30]),
 
   /** Max total Heerich API calls per composition */
-  MAX_TOTAL_CALLS: 30,
+  MAX_TOTAL_CALLS: 50,
 
   /** Hick's Law: distinct additive primitive types per composition */
   DISTINCT_TYPES_RANGE: Object.freeze([2, 3]),

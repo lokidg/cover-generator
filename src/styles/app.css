@@ -20,7 +20,7 @@ body {
   font-size: var(--text-body-md);
   line-height: var(--leading-normal);
   color: var(--color-primary);
-  background-color: var(--color-neutral);
+  background-color: #F7F7F7;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -29,6 +29,10 @@ body {
   height: 100%;
   width: 100%;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: column;
+}
+
+/* Hide DialKit panel when in basic mode */
+body.basic-mode .dialkit-root {
+  display: none !important;
 }

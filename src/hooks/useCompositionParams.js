@@ -12,9 +12,9 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useCompositionPanel } from '../dialkit/useCompositionPanel.js'
 import { SeededPRNG } from '../engine/SeededPRNG.js'
 import { CompositionEngine } from '../engine/CompositionEngine.js'
-import { createHeerichInstance } from '../engine/heerichAdapter.js'
+import { loadHeerich, createHeerichInstance } from '../engine/heerichAdapter.js'
 
-const DEBOUNCE_MS = 50
+const DEBOUNCE_MS = 300
 
 /**
  * @typedef {Object} CompositionParamsResult
@@ -30,12 +30,13 @@ const DEBOUNCE_MS = 50
  *
  * @returns {CompositionParamsResult}
  */
-export function useCompositionParams() {
-  const params = useCompositionPanel()
+export function useCompositionParams(onAction) {
+  const params = useCompositionPanel(onAction)
 
   const [svgString, setSvgString] = useState(null)
-  const [isLoading, setIsLoading] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [engineReady, setEngineReady] = useState(false)
 
   // Track the debounce timer
   const debounceRef = useRef(null)
@@ -43,22 +44,32 @@ export function useCompositionParams() {
   const paramsRef = useRef(params)
   paramsRef.current = params
 
+  // Load Heerich engine from CDN on mount
+  useEffect(() => {
+    loadHeerich()
+      .then(() => {
+        setEngineReady(true)
+        setError(null)
+      })
+      .catch((err) => {
+        setError(err.message || 'Rendering engine failed to load. Check your internet connection.')
+        setIsLoading(false)
+      })
+  }, [])
+
   // Handle randomize action — sets seed to Date.now() | 0
   const prevRandomizeRef = useRef(null)
   useEffect(() => {
-    // DialKit action params are truthy when triggered
     if (params.randomize && params.randomize !== prevRandomizeRef.current) {
       prevRandomizeRef.current = params.randomize
-      // DialKit doesn't provide a setter for individual params,
-      // so we trigger a re-render by updating the seed externally.
-      // In practice, DialKit's action callback fires and we handle it
-      // by generating with a new seed.
       paramsRef.current = { ...paramsRef.current, seed: Date.now() | 0 }
     }
   }, [params.randomize])
 
   // Generate composition on debounced param changes
   const generate = useCallback(() => {
+    if (!engineReady) return
+
     const currentParams = paramsRef.current
     setIsLoading(true)
     setError(null)
@@ -89,11 +100,10 @@ export function useCompositionParams() {
       setSvgString(result.svgString)
     } catch (err) {
       setError(err.message || 'Composition rendering failed. Try a different seed.')
-      // Keep previous SVG on error (don't clear it)
     } finally {
       setIsLoading(false)
     }
-  }, [])
+  }, [engineReady])
 
   // Debounce param changes at 50ms
   useEffect(() => {
@@ -122,7 +132,8 @@ export function useCompositionParams() {
     params.gridTileSize,
     params.randomize,
     generate,
+    engineReady,
   ])
 
-  return { params, svgString, isLoading, error }
+  return { params, svgString, isLoading, error, regenerate: generate }
 }
