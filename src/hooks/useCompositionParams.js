@@ -1,15 +1,12 @@
 /**
- * useCompositionParams — Central state hook bridging DialKit params to the composition engine.
+ * useCompositionParams — Central state hook bridging panel params to the composition engine.
  *
- * Subscribes to DialKit parameter changes via useCompositionPanel,
- * debounces at 50ms to prevent excessive Heerich calls during slider drags,
+ * Accepts params from useSettingsState (plain React state),
+ * debounces at 300ms to prevent excessive Heerich calls during slider drags,
  * then triggers CompositionEngine.generate() and exposes the resulting SVG.
- *
- * Requirements: 1.2, 3.3, 8.5
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { useCompositionPanel } from '../dialkit/useCompositionPanel.js'
 import { SeededPRNG } from '../engine/SeededPRNG.js'
 import { CompositionEngine } from '../engine/CompositionEngine.js'
 import { loadHeerich, createHeerichInstance } from '../engine/heerichAdapter.js'
@@ -17,30 +14,19 @@ import { loadHeerich, createHeerichInstance } from '../engine/heerichAdapter.js'
 const DEBOUNCE_MS = 300
 
 /**
- * @typedef {Object} CompositionParamsResult
- * @property {object} params - Current DialKit parameters
- * @property {string|null} svgString - Generated SVG string (null before first render)
- * @property {boolean} isLoading - Whether a render is in progress
- * @property {string|null} error - Error message if engine call failed
- */
-
-/**
  * Central composition state hook.
- * Bridges DialKit panel params → debounced engine render → SVG output.
+ * Bridges panel params → debounced engine render → SVG output.
  *
- * @returns {CompositionParamsResult}
+ * @param {object} params - Current settings from useSettingsState
+ * @returns {{ svgString: string|null, isLoading: boolean, error: string|null, regenerate: Function }}
  */
-export function useCompositionParams(onAction) {
-  const params = useCompositionPanel(onAction)
-
+export function useCompositionParams(params) {
   const [svgString, setSvgString] = useState(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState(null)
   const [engineReady, setEngineReady] = useState(false)
 
-  // Track the debounce timer
   const debounceRef = useRef(null)
-  // Track the latest params for the debounced callback
   const paramsRef = useRef(params)
   paramsRef.current = params
 
@@ -57,41 +43,39 @@ export function useCompositionParams(onAction) {
       })
   }, [])
 
-  // Handle randomize action — sets seed to Date.now() | 0
-  const prevRandomizeRef = useRef(null)
-  useEffect(() => {
-    if (params.randomize && params.randomize !== prevRandomizeRef.current) {
-      prevRandomizeRef.current = params.randomize
-      paramsRef.current = { ...paramsRef.current, seed: Date.now() | 0 }
-    }
-  }, [params.randomize])
-
-  // Generate composition on debounced param changes
+  // Generate composition
   const generate = useCallback(() => {
     if (!engineReady) return
 
-    const currentParams = paramsRef.current
+    const p = paramsRef.current
     setIsLoading(true)
     setError(null)
 
     try {
-      const seed = currentParams.seed | 0
+      const seed = p.seed | 0
       const prng = new SeededPRNG(seed)
 
       const config = {
-        clusterCount: currentParams.clusterCount,
-        primitiveCount: currentParams.primitiveCount,
-        accentOpacity: currentParams.accentOpacity,
-        surfaceOpacity: currentParams.surfaceOpacity,
-        booleanSubtraction: currentParams.booleanSubtraction,
-        cameraAngle: currentParams.cameraAngle,
-        gridTileSize: currentParams.gridTileSize,
-        accentColor: currentParams.accentColor,
+        clusterCount: p.clusterCount,
+        primitiveCount: p.primitiveCount,
+        accentOpacity: p.accentOpacity,
+        surfaceOpacity: p.surfaceOpacity,
+        booleanSubtraction: p.booleanSubtraction,
+        cameraAngle: p.cameraAngle,
+        gridTileSize: p.gridTileSize,
+        accentColor: p.accentColor,
       }
 
       const heerich = createHeerichInstance({
-        cameraAngle: config.cameraAngle,
-        gridTileSize: config.gridTileSize,
+        cameraAngle: p.cameraAngle,
+        cameraDistance: p.cameraDistance,
+        gridTileSize: p.gridTileSize,
+        fillColor: p.fillColor,
+        strokeColor: p.strokeColor,
+        strokeWidth: p.strokeWidth,
+        gap: p.gap,
+        outlineWidth: p.outlineWidth || 0,
+        outlineColor: p.outlineColor || '#000000',
         width: 1500,
         height: 500,
       })
@@ -105,21 +89,11 @@ export function useCompositionParams(onAction) {
     }
   }, [engineReady])
 
-  // Debounce param changes at 50ms
+  // Debounce param changes
   useEffect(() => {
-    if (debounceRef.current) {
-      clearTimeout(debounceRef.current)
-    }
-
-    debounceRef.current = setTimeout(() => {
-      generate()
-    }, DEBOUNCE_MS)
-
-    return () => {
-      if (debounceRef.current) {
-        clearTimeout(debounceRef.current)
-      }
-    }
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(generate, DEBOUNCE_MS)
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
   }, [
     params.seed,
     params.clusterCount,
@@ -129,11 +103,17 @@ export function useCompositionParams(onAction) {
     params.primitiveCount,
     params.booleanSubtraction,
     params.cameraAngle,
+    params.cameraDistance,
     params.gridTileSize,
-    params.randomize,
+    params.fillColor,
+    params.strokeColor,
+    params.strokeWidth,
+    params.gap,
+    params.outlineWidth,
+    params.outlineColor,
     generate,
     engineReady,
   ])
 
-  return { params, svgString, isLoading, error, regenerate: generate }
+  return { svgString, isLoading, error, regenerate: generate }
 }

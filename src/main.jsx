@@ -1,10 +1,9 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import { DialRoot } from 'dialkit'
-import '../node_modules/dialkit/dist/styles.css'
 import { App } from './App.jsx'
 import './styles/tokens.css'
 import './styles/app.css'
+import './styles/settings-panel.css'
 
 function ErrorBoundary({ children }) {
   const [error, setError] = React.useState(null)
@@ -46,6 +45,5 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     <ErrorBoundary>
       <App />
     </ErrorBoundary>
-    <DialRoot />
   </React.StrictMode>
 )

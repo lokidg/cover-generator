@@ -88,7 +88,7 @@ export function CanvasViewport({ svgString, width, height, textOverlayConfig }) 
       }}
     >
       <div style={{ position: 'relative', width: `${displayWidth}px`, height: `${displayHeight}px` }}>
-        {/* Canvas with generative art at 50% opacity */}
+        {/* Canvas with generative art */}
         <canvas
           ref={canvasRef}
           style={{
@@ -96,7 +96,6 @@ export function CanvasViewport({ svgString, width, height, textOverlayConfig }) 
             height: '100%',
             border: '1px solid #C9C9C9',
             background: '#FFFFFF',
-            opacity: 0.5,
           }}
           data-testid="canvas-viewport"
         />
@@ -105,7 +104,7 @@ export function CanvasViewport({ svgString, width, height, textOverlayConfig }) 
           style={{
             position: 'absolute',
             inset: 0,
-            background: 'linear-gradient(to bottom, transparent 0%, rgba(255,255,255,0.8) 50%, #FFFFFF 100%)',
+            background: 'linear-gradient(to bottom, transparent 0%, rgba(255,255,255,0.4) 50%, rgba(255,255,255,0.5) 100%)',
             pointerEvents: 'none',
             zIndex: 1,
           }}

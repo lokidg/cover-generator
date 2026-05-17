@@ -14,11 +14,11 @@ export const GestaltConstraints = Object.freeze({
   /** Closure: 3–5 boxes implying an enclosing form */
   CLOSURE_BOX_RANGE: Object.freeze([3, 5]),
 
-  /** Figure-ground: background cluster fill opacity range (5–15%) */
-  BACKGROUND_OPACITY_RANGE: Object.freeze([0.05, 0.15]),
+  /** Figure-ground: background cluster fill opacity range (5–60%) */
+  BACKGROUND_OPACITY_RANGE: Object.freeze([0.05, 0.60]),
 
-  /** Figure-ground: foreground accent fill opacity range (10–25%) */
-  FOREGROUND_OPACITY_RANGE: Object.freeze([0.10, 0.25]),
+  /** Figure-ground: foreground accent fill opacity range (10–80%) */
+  FOREGROUND_OPACITY_RANGE: Object.freeze([0.10, 0.80]),
 
   /** Primitive count bounds per composition */
   PRIMITIVE_COUNT_RANGE: Object.freeze([8, 30]),
